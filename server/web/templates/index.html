@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Router Command Translator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .result-box {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+        .command-table {
+            width: 100%;
+            margin-top: 20px;
+        }
+        .command-table th {
+            background-color: #f8f9fa;
+            position: sticky;
+            top: 0;
+        }
+        .vendor-column {
+            min-width: 200px;
+        }
+        .table-container {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .ui-autocomplete {
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Router Command Translator</h1>
+        
+        <!-- Translation Form -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Translate Command</h5>
+                <form id="translateForm">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="sourceVendor" class="form-label">Source Vendor</label>
+                                <select class="form-select" id="sourceVendor" required>
+                                    <option value="">Select vendor...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="targetVendor" class="form-label">Target Vendor</label>
+                                <select class="form-select" id="targetVendor" required>
+                                    <option value="">Select vendor...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="command" class="form-label">Command</label>
+                                <input type="text" class="form-control" id="command" required>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Translate</button>
+                </form>
+                <div id="translationResult" class="result-box mt-3" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Command Reference -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Command Reference</h5>
+                <div class="mb-3">
+                    <label for="topic" class="form-label">Select Topic</label>
+                    <select class="form-select" id="topic">
+                        <option value="">Select topic...</option>
+                    </select>
+                </div>
+                <div class="table-container">
+                    <table class="table table-bordered command-table">
+                        <thead>
+                            <tr>
+                                <th>Description</th>
+                                <th class="vendor-column">Huawei</th>
+                                <th class="vendor-column">Cisco</th>
+                                <th class="vendor-column">Juniper</th>
+                                <th class="vendor-column">Nokia</th>
+                            </tr>
+                        </thead>
+                        <tbody id="commandTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            // Populate vendor dropdowns
+            fetch('/vendors')
+                .then(response => response.json())
+                .then(data => {
+                    const sourceSelect = document.getElementById('sourceVendor');
+                    const targetSelect = document.getElementById('targetVendor');
+                    
+                    data.vendors.forEach(vendor => {
+                        sourceSelect.add(new Option(vendor, vendor));
+                        targetSelect.add(new Option(vendor, vendor));
+                    });
+                });
+
+            // Populate topics dropdown
+            fetch('/topics')
+                .then(response => response.json())
+                .then(data => {
+                    const topicSelect = document.getElementById('topic');
+                    data.topics.forEach(topic => {
+                        topicSelect.add(new Option(topic, topic));
+                    });
+                });
+
+            // Initialize autocomplete for command input
+            $('#command').autocomplete({
+                minLength: 2,
+                source: function(request, response) {
+                    const vendor = $('#sourceVendor').val();
+                    if (!vendor) {
+                        response([]);
+                        return;
+                    }
+                    
+                    fetch(`/suggest_commands?vendor=${encodeURIComponent(vendor)}&term=${encodeURIComponent(request.term)}`)
+                        .then(res => res.json())
+                        .then(data => {
+                            response(data.suggestions || []);
+                        })
+                        .catch(() => response([]));
+                },
+                position: { my: "left top+2" }
+            });
+
+            // Update autocomplete source when vendor changes
+            $('#sourceVendor').on('change', function() {
+                $('#command').val('').autocomplete('search', '');
+            });
+
+            // Handle topic selection
+            $('#topic').on('change', function() {
+                const topic = this.value;
+                if (!topic) return;
+
+                console.log('Selected topic:', topic);  // Debug log
+
+                fetch(`/commands/${topic}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Received data:', data);  // Debug log
+                        const tableBody = document.getElementById('commandTableBody');
+                        tableBody.innerHTML = '';
+                        
+                        if (!data.commands || Object.keys(data.commands).length === 0) {
+                            console.log('No commands found for topic');  // Debug log
+                            tableBody.innerHTML = '<tr><td colspan="5" class="text-center">No commands found for this topic</td></tr>';
+                            return;
+                        }
+                        
+                        // Create a map to organize commands by description
+                        const commandMap = new Map();
+                        
+                        // Process all vendor pairs
+                        Object.entries(data.commands).forEach(([vendorPair, commands]) => {
+                            console.log('Processing vendor pair:', vendorPair, 'commands:', commands);  // Debug log
+                            const [sourceVendor, targetVendor] = vendorPair.split('->');
+                            commands.forEach(([src, tgt]) => {
+                                // Use the first command's description as key
+                                const key = `${src}->${tgt}`;
+                                if (!commandMap.has(key)) {
+                                    commandMap.set(key, {
+                                        description: src, // Using source command as description
+                                        huawei: '',
+                                        cisco: '',
+                                        juniper: '',
+                                        nokia: ''
+                                    });
+                                }
+                                const entry = commandMap.get(key);
+                                entry[sourceVendor.toLowerCase()] = src;
+                                entry[targetVendor.toLowerCase()] = tgt;
+                            });
+                        });
+                        
+                        console.log('Command map:', commandMap);  // Debug log
+                        
+                        // Create table rows
+                        commandMap.forEach((entry) => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${entry.description}</td>
+                                <td>${entry.huawei || '-'}</td>
+                                <td>${entry.cisco || '-'}</td>
+                                <td>${entry.juniper || '-'}</td>
+                                <td>${entry.nokia || '-'}</td>
+                            `;
+                            tableBody.appendChild(row);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error loading commands:', error);
+                        const tableBody = document.getElementById('commandTableBody');
+                        tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Error loading commands</td></tr>';
+                    });
+            });
+
+            // Handle translation form submission
+            $('#translateForm').on('submit', function(e) {
+                e.preventDefault();
+                
+                const data = {
+                    source_vendor: $('#sourceVendor').val(),
+                    target_vendor: $('#targetVendor').val(),
+                    command: $('#command').val()
+                };
+                
+                fetch('/translate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    const resultDiv = $('#translationResult');
+                    if (data.error) {
+                        resultDiv.html(`<div class="alert alert-danger">${data.error}</div>`);
+                    } else {
+                        resultDiv.html(`
+                            <div class="alert alert-success">
+                                <strong>${data.source_command}</strong> → <strong>${data.translated_command}</strong>
+                            </div>
+                        `);
+                    }
+                    resultDiv.show();
+                })
+                .catch(error => {
+                    console.error('Error translating command:', error);
+                    $('#translationResult').html('<div class="alert alert-danger">Error translating command</div>').show();
+                });
+            });
+        });
+    </script>
+</body>
+</html> 
